@@ -22,14 +22,14 @@ from collections import defaultdict, Counter
 torch.backends.cudnn.benchmark = False
 warnings.simplefilter(action='ignore', category=FutureWarning)
 sys.path.insert(0, os.path.abspath(
-    os.path.join(os.path.dirname(__file__), '../../')))
+    os.path.join(os.path.dirname(__file__), '../../'))) #add project root to sys.path so that /openpoints can be imported
 
-from openpoints.models import build_model_from_cfg
+from openpoints.models import build_model_from_cfg #defining model
 from openpoints.models.layers import torch_grouping_operation, knn_point
-from openpoints.loss import build_criterion_from_cfg
+from openpoints.loss import build_criterion_from_cfg #defining loss
 from openpoints.scheduler import build_scheduler_from_cfg
 from openpoints.optim import build_optimizer_from_cfg
-from openpoints.dataset import build_dataloader_from_cfg, get_class_weights, get_features_by_keys
+from openpoints.dataset import build_dataloader_from_cfg, get_class_weights, get_features_by_keys #build dataloader
 from openpoints.transforms import build_transforms_from_cfg
 from openpoints.utils import AverageMeter, ConfusionMatrix
 from openpoints.utils import set_random_seed, save_checkpoint, load_checkpoint, resume_checkpoint, setup_logger_dist, \
@@ -38,14 +38,14 @@ from openpoints.models.layers import furthest_point_sample
 
 
 
-def batched_bincount(x, dim, max_value):
+def batched_bincount(x, dim, max_value): #counts occurences of each class per batch for part segmentation
     target = torch.zeros(x.shape[0], max_value, dtype=x.dtype, device=x.device)
     values = torch.ones_like(x)
     target.scatter_add_(dim, x, values)
     return target
 
 
-def part_seg_refinement(pred, pos, cls, cls2parts, n=10):
+def part_seg_refinement(pred, pos, cls, cls2parts, n=10): #refines segmentation prediction using k-nearest neighbors (remove noisy segment labels)
     pred_np = pred.cpu().data.numpy()
     for shape_idx in range(pred.size(0)):  # sample_idx
         parts = cls2parts[cls[shape_idx]]
@@ -64,7 +64,7 @@ def part_seg_refinement(pred, pos, cls, cls2parts, n=10):
     return pred
 
 
-def get_ins_mious(pred, target, cls, cls2parts,
+def get_ins_mious(pred, target, cls, cls2parts, #computes instance-level mean IoU
                   multihead=False,
                   ):
     """Get the Shape IoU
@@ -98,14 +98,14 @@ def get_ins_mious(pred, target, cls, cls2parts,
 
 
 def main(gpu, cfg):
-    if cfg.distributed:
+    if cfg.distributed: #setup distributed training
         if cfg.mp:
             cfg.rank = gpu
         dist.init_process_group(backend=cfg.dist_backend,
                                 init_method=cfg.dist_url,
                                 world_size=cfg.world_size,
                                 rank=cfg.rank)
-        dist.barrier()
+        dist.barrier() #ensure all processes synchronized
     # logger
     setup_logger_dist(cfg.log_path, cfg.rank, name=cfg.dataset.common.NAME)
     if cfg.rank == 0:
@@ -118,11 +118,11 @@ def main(gpu, cfg):
     logging.info(cfg)
 
     # build dataset
-    val_loader = build_dataloader_from_cfg(cfg.batch_size,
+    val_loader = build_dataloader_from_cfg(cfg.batch_size, #load dataset from the config file
                                            cfg.dataset,
                                            cfg.dataloader,
                                            datatransforms_cfg=cfg.datatransforms,
-                                           split='val',
+                                           split='val', #test split "val"
                                            distributed=cfg.distributed
                                            )
     logging.info(f"length of validation dataset: {len(val_loader.dataset)}")
@@ -138,7 +138,7 @@ def main(gpu, cfg):
         cfg.model.decoder_args.cls2partembed = val_loader.dataset.cls2partembed
     if cfg.model.get('in_channels', None) is None:
         cfg.model.in_channels = cfg.model.encoder_args.in_channels
-    model = build_model_from_cfg(cfg.model).cuda()
+    model = build_model_from_cfg(cfg.model).cuda() #######################################BUILD MODEL HERE########################
     model_size = cal_model_parm_nums(model)
     logging.info(model)
     logging.info('Number of params: %.4f M' % (model_size / 1e6))
@@ -176,8 +176,8 @@ def main(gpu, cfg):
 
             logging.info(f'\nresume val instance mIoU is {test_ins_miou}, val class mIoU is {test_cls_miou} \n ')
         else:
-            if cfg.mode in ['val', 'test']:
-                load_checkpoint(model, pretrained_path=cfg.pretrained_path)
+            if cfg.mode in ['val', 'test']: #run inference if mode == test. otherwise run train
+                load_checkpoint(model, pretrained_path=cfg.pretrained_path) #load pretrained
                 test_ins_miou, test_cls_miou, test_cls_mious = validate_fn(model, val_loader, cfg,
                                                                             num_votes=cfg.num_votes,
                                                                             data_transform=voting_transform
@@ -284,7 +284,7 @@ def main(gpu, cfg):
     wandb.finish(exit_code=True)
 
 
-def train_one_epoch(model, train_loader, criterion, optimizer, scheduler, epoch, cfg):
+def train_one_epoch(model, train_loader, criterion, optimizer, scheduler, epoch, cfg): #iterate over the dataset to run forward + backward propagation
     loss_meter = AverageMeter()
     model.train()  # set model to training mode
     pbar = tqdm(enumerate(train_loader), total=train_loader.__len__())
@@ -324,28 +324,28 @@ def train_one_epoch(model, train_loader, criterion, optimizer, scheduler, epoch,
 
 
 @torch.no_grad()
-def validate(model, val_loader, cfg, num_votes=0, data_transform=None):
+def validate(model, val_loader, cfg, num_votes=0, data_transform=None): #run model inference on the test set
     model.eval()  # set model to eval mode
     pbar = tqdm(enumerate(val_loader), total=val_loader.__len__())
     cls_mious = torch.zeros(cfg.shape_classes, dtype=torch.float32).cuda(non_blocking=True)
     cls_nums = torch.zeros(cfg.shape_classes, dtype=torch.int32).cuda(non_blocking=True)
     ins_miou_list = []
 
-    # label_size: b, means each sample has one corresponding class
-    for idx, data in pbar:
-        for key in data.keys():
+    # label_size: b, means each sample has one corresponding class 
+    for idx, data in pbar: #each data is a dictionary containing a batch of "pos" (shape[8, 2048, 3]), "x"(shape[8, 2048, 4]), "y"[8, 2048] segmentation label for each point, "cls"[8, 1] shape category of the object: chair, table
+        for key in data.keys(): 
             data[key] = data[key].cuda(non_blocking=True)
         target = data['y']
         cls = data['cls']
         data['x'] = get_features_by_keys(data, cfg.feature_keys)
         batch_size, num_point, _ = data['pos'].size()
         logits = 0
-        for v in range(num_votes+1):
+        for v in range(num_votes+1): #inference each with different data transformation
             set_random_seed(v)
             if v > 0:
                 data['pos'] = data_transform(data['pos'])
             logits += model(data)
-        logits /= (num_votes + 1)
+        logits /= (num_votes + 1) #averaging different vote
         preds = logits.max(dim=1)[1]
         if cfg.get('refine', False):
             part_seg_refinement(preds, data['pos'], data['cls'], cfg.cls2parts, cfg.get('refine_n', 10))
@@ -393,12 +393,12 @@ if __name__ == "__main__":
     parser.add_argument('--cfg', type=str, required=True, help='config file')
     args, opts = parser.parse_known_args()
     cfg = EasyConfig()
-    cfg.load(args.cfg, recursive=True)
+    cfg.load(args.cfg, recursive=True) #load experiment settings from YAML
     cfg.update(opts)
     if cfg.seed is None:
         cfg.seed = np.random.randint(1, 10000)
     # init distributed env first, since logger depends on the dist info.
-    cfg.rank, cfg.world_size, cfg.distributed, cfg.mp = dist_utils.get_dist_info(cfg)
+    cfg.rank, cfg.world_size, cfg.distributed, cfg.mp = dist_utils.get_dist_info(cfg) #retrieve rank and world size
     cfg.sync_bn = cfg.world_size > 1
 
     # logger
@@ -421,7 +421,7 @@ if __name__ == "__main__":
 
     cfg.is_training = cfg.mode not in ['test', 'testing', 'val', 'eval', 'evaluation']
 
-    if cfg.mode in ['resume', 'test', 'val']:
+    if cfg.mode in ['resume', 'test', 'val']: #if mode==test, it resumes from a pretrained checkpoint
         resume_exp_directory(cfg, pretrained_path=cfg.pretrained_path)
         cfg.wandb.tags = [cfg.mode]
     else:

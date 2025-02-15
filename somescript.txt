@@ -1,0 +1,1 @@
+CUDA_VISIBLE_DEVICES=0 python examples/shapenetpart/main.py --cfg cfgs/shapenetpart/pointnext-s.yaml mode=test --pretrained_path /home/thang/Desktop/PointNeXt/checkpoint/shapenetpart-train-pointnext-s-ngpus4-seed5011-20220821-170334-J6Ez964eYwHHPZP4xNGcT9_ckpt_best.pth
